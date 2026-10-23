@@ -1,11 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { LockStatus, LocksResponse } from "@/lib/locks";
 
 const REFRESH_MS = 3 * 60 * 1000;
+const DEFAULT_LOCK = "13";
+
+function windowAround(locks: LockStatus[], selectedId: string): LockStatus[] {
+  const index = locks.findIndex((lock) => lock.displayNumber === selectedId);
+  if (index < 0) return [];
+  return locks.slice(Math.max(0, index - 1), index + 2);
+}
 
 function formatUpdatedAt(iso: string | null): string {
   if (!iso) return "—";
@@ -56,7 +63,13 @@ function Stat({
   );
 }
 
-function LockRow({ lock }: { lock: LockStatus }) {
+function LockRow({
+  lock,
+  selected,
+}: {
+  lock: LockStatus;
+  selected: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const hasNotes = Boolean(lock.notes);
 
@@ -65,6 +78,8 @@ function LockRow({ lock }: { lock: LockStatus }) {
       className={cn(
         "border-b border-[var(--line)] px-4 py-3.5 transition-colors sm:px-5",
         lock.busy && "bg-[var(--busy-wash)]",
+        selected &&
+          "border-l-2 border-l-[var(--accent)] bg-[color-mix(in_oklab,var(--accent)_10%,transparent)]",
       )}
     >
       <div className="flex items-start justify-between gap-3">
@@ -81,11 +96,18 @@ function LockRow({ lock }: { lock: LockStatus }) {
             {lock.lockName}
           </p>
         </div>
-        {lock.busy && (
-          <span className="shrink-0 rounded-sm border border-[var(--signal)]/40 bg-[var(--signal)]/10 px-2 py-0.5 font-mono text-[0.65rem] uppercase tracking-wider text-[var(--signal)]">
-            Active
-          </span>
-        )}
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          {selected && (
+            <span className="rounded-sm border border-[var(--accent)]/50 bg-[var(--accent)]/15 px-2 py-0.5 font-mono text-[0.65rem] uppercase tracking-wider text-[var(--accent)]">
+              Selected
+            </span>
+          )}
+          {lock.busy && (
+            <span className="rounded-sm border border-[var(--signal)]/40 bg-[var(--signal)]/10 px-2 py-0.5 font-mono text-[0.65rem] uppercase tracking-wider text-[var(--signal)]">
+              Active
+            </span>
+          )}
+        </div>
       </div>
 
       <dl className="mt-3 grid grid-cols-3 gap-3 sm:grid-cols-5">
@@ -120,7 +142,7 @@ function LockRow({ lock }: { lock: LockStatus }) {
 function SkeletonList() {
   return (
     <div className="animate-pulse divide-y divide-[var(--line)]" aria-hidden>
-      {Array.from({ length: 8 }).map((_, i) => (
+      {Array.from({ length: 3 }).map((_, i) => (
         <div key={i} className="space-y-3 px-4 py-4 sm:px-5">
           <div className="h-6 w-40 rounded bg-[var(--line)]" />
           <div className="h-3 w-24 rounded bg-[var(--line)]" />
@@ -140,6 +162,7 @@ export function LockBoard() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [selectedId, setSelectedId] = useState(DEFAULT_LOCK);
 
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
@@ -168,6 +191,10 @@ export function LockBoard() {
   }, [load]);
 
   const busyCount = data?.locks.filter((l) => l.busy).length ?? 0;
+  const windowLocks = useMemo(
+    () => (data ? windowAround(data.locks, selectedId) : []),
+    [data, selectedId],
+  );
 
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col">
@@ -199,6 +226,28 @@ export function LockBoard() {
                 {busyCount} active · {data.locks.length} locks
               </span>
             )}
+            <label className="inline-flex items-center gap-2 text-sm text-[var(--ink-soft)]">
+              <span className="font-mono text-[0.7rem] uppercase tracking-[0.14em]">
+                Lock
+              </span>
+              <select
+                aria-label="Lock"
+                value={selectedId}
+                onChange={(event) => setSelectedId(event.target.value)}
+                disabled={!data}
+                className="h-8 rounded-lg border border-[var(--line-strong)] bg-[var(--panel)] px-2 font-mono text-sm text-[var(--ink)] outline-none focus-visible:border-[var(--accent)] focus-visible:ring-3 focus-visible:ring-[var(--accent)]/40 disabled:opacity-50"
+              >
+                {data ? (
+                  data.locks.map((lock) => (
+                    <option key={lock.lockNumber} value={lock.displayNumber}>
+                      Lock {lock.displayNumber}
+                    </option>
+                  ))
+                ) : (
+                  <option value={DEFAULT_LOCK}>Lock {DEFAULT_LOCK}</option>
+                )}
+              </select>
+            </label>
             <Button
               type="button"
               variant="outline"
@@ -242,8 +291,12 @@ export function LockBoard() {
               </div>
             )}
             <div>
-              {data.locks.map((lock) => (
-                <LockRow key={lock.lockNumber} lock={lock} />
+              {windowLocks.map((lock) => (
+                <LockRow
+                  key={lock.lockNumber}
+                  lock={lock}
+                  selected={lock.displayNumber === selectedId}
+                />
               ))}
             </div>
           </>
