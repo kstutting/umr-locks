@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   currentVessels,
+  passagesInLastEightHours,
   queueUrl,
   type LockVessels,
   type VesselsResponse,
@@ -22,7 +23,7 @@ async function fetchLockVessels(displayNumber: string): Promise<LockVessels> {
   if (cached && cached.expiresAt > now) return cached.payload;
 
   const url = queueUrl(displayNumber);
-  if (!url) return { vessels: [], error: "Unknown lock" };
+  if (!url) return { vessels: [], through: [], error: "Unknown lock" };
 
   const response = await fetch(url, {
     cache: "no-store",
@@ -41,7 +42,10 @@ async function fetchLockVessels(displayNumber: string): Promise<LockVessels> {
     throw new Error("Corps queue is busy. Try again in a minute.");
   }
 
-  const payload: LockVessels = { vessels: currentVessels(xml) };
+  const payload: LockVessels = {
+    vessels: currentVessels(xml),
+    through: passagesInLastEightHours(xml),
+  };
   cache.set(displayNumber, { expiresAt: now + CACHE_TTL_MS, payload });
   return payload;
 }
@@ -74,7 +78,7 @@ export async function GET(request: Request) {
           locks[displayNumber] = cached.payload;
           return;
         }
-        locks[displayNumber] = { vessels: [], error: message };
+        locks[displayNumber] = { vessels: [], through: [], error: message };
       }
     }),
   );

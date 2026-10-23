@@ -1,7 +1,7 @@
 export type VesselMovement = {
   name: string;
-  status: "locking" | "pending";
-  statusLabel: "In lock" | "Pending";
+  status: "locking" | "pending" | "passed";
+  statusLabel: "In lock" | "Pending" | "Through";
   direction: string;
   barges: number;
   bargeLabel: string;
@@ -11,6 +11,7 @@ export type VesselMovement = {
 
 export type LockVessels = {
   vessels: VesselMovement[];
+  through: VesselMovement[];
   error?: string;
 };
 
@@ -91,6 +92,41 @@ function parseRows(xml: string): QueueRow[] {
     rows.push(row);
   }
   return rows;
+}
+
+const EIGHT_HOURS_MS = 8 * 60 * 60 * 1000;
+
+function chicagoOffsetMs(utcMs: number): number {
+  const tz = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Chicago",
+    timeZoneName: "shortOffset",
+  })
+    .formatToParts(new Date(utcMs))
+    .find((part) => part.type === "timeZoneName")?.value;
+  const match = tz?.match(/GMT([+-])(\d{1,2})(?::(\d{2}))?/);
+  if (!match) return -6 * 60 * 60 * 1000;
+  const sign = match[1] === "-" ? -1 : 1;
+  const minutes = sign * (Number(match[2]) * 60 + Number(match[3] ?? 0));
+  return minutes * 60 * 1000;
+}
+
+/** Corps queue clocks are Central time, not UTC. */
+function centralClockToUtc(value: string | undefined): number | null {
+  if (!value) return null;
+  const match = value
+    .trim()
+    .match(/^(\d{1,2})\/(\d{1,2})\/(\d{2})\s+(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const asIfUtc = Date.UTC(
+    2000 + Number(match[3]),
+    Number(match[1]) - 1,
+    Number(match[2]),
+    Number(match[4]),
+    Number(match[5]),
+  );
+  let utc = asIfUtc - chicagoOffsetMs(asIfUtc);
+  utc = asIfUtc - chicagoOffsetMs(utc);
+  return utc;
 }
 
 function timeKey(value: string | undefined): number {
@@ -182,4 +218,38 @@ export function currentVessels(xml: string): VesselMovement[] {
   if (pending[0]) pending[0].next = true;
 
   return [...locking, ...pending].map(({ sort: _sort, ...vessel }) => vessel);
+}
+
+export function passagesInLastEightHours(
+  xml: string,
+  now = Date.now(),
+): VesselMovement[] {
+  const finished: Array<VesselMovement & { sort: number }> = [];
+  const earliest = now - EIGHT_HOURS_MS;
+
+  for (const row of parseRows(xml)) {
+    const endedAt = centralClockToUtc(row.END_OF_LOCKAGE);
+    if (endedAt === null || endedAt < earliest || endedAt > now + 2 * 60 * 1000) {
+      continue;
+    }
+    const name = row.VESSEL_NAME?.trim();
+    if (!name) continue;
+    const barges = Number(row.NUM_BARGES);
+    const bargeCount = Number.isFinite(barges) ? barges : 0;
+    const clock = formatClock(row.END_OF_LOCKAGE);
+    finished.push({
+      name,
+      direction: directionLabel(row.DIRECTION),
+      barges: bargeCount,
+      bargeLabel: bargeLabel(bargeCount),
+      next: false,
+      status: "passed",
+      statusLabel: "Through",
+      whenLabel: clock ? `Finished ${clock}` : "Finished",
+      sort: endedAt,
+    });
+  }
+
+  finished.sort((a, b) => b.sort - a.sort);
+  return finished.map(({ sort: _sort, ...vessel }) => vessel);
 }

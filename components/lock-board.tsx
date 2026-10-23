@@ -65,7 +65,14 @@ function Stat({
 }
 
 function VesselLine({ vessel }: { vessel: VesselMovement }) {
-  const inLock = vessel.status === "locking";
+  const label =
+    vessel.status === "locking"
+      ? "In lock"
+      : vessel.status === "passed"
+        ? "Through"
+        : vessel.next
+          ? "Next"
+          : "Pending";
   return (
     <li className="flex items-start justify-between gap-3 py-2">
       <div className="min-w-0">
@@ -79,14 +86,14 @@ function VesselLine({ vessel }: { vessel: VesselMovement }) {
       <span
         className={cn(
           "shrink-0 rounded-sm border px-1.5 py-0.5 font-mono text-[0.6rem] uppercase tracking-wider",
-          inLock
+          vessel.status === "locking"
             ? "border-[var(--accent)]/50 bg-[var(--accent)]/15 text-[var(--accent)]"
             : vessel.next
               ? "border-[var(--signal)]/60 bg-[var(--signal)]/15 text-[var(--signal)]"
               : "border-[var(--line-strong)] text-[var(--ink-muted)]",
         )}
       >
-        {inLock ? "In lock" : vessel.next ? "Next" : "Pending"}
+        {label}
       </span>
     </li>
   );
@@ -105,7 +112,8 @@ function VesselList({
     );
   }
   if (!report) return null;
-  if (report.error && report.vessels.length === 0) {
+  const through = report.through ?? [];
+  if (report.error && report.vessels.length === 0 && through.length === 0) {
     return (
       <p className="mt-3 text-xs text-[var(--signal)]">{report.error}</p>
     );
@@ -113,14 +121,6 @@ function VesselList({
 
   const inLock = report.vessels.filter((vessel) => vessel.status === "locking");
   const pending = report.vessels.filter((vessel) => vessel.status === "pending");
-
-  if (inLock.length === 0 && pending.length === 0) {
-    return (
-      <p className="mt-3 text-xs text-[var(--ink-muted)]">
-        No vessels in the lock or waiting.
-      </p>
-    );
-  }
 
   return (
     <div className="mt-3 space-y-2">
@@ -151,6 +151,30 @@ function VesselList({
           </ul>
         </section>
       )}
+      {inLock.length === 0 && pending.length === 0 && (
+        <p className="text-xs text-[var(--ink-muted)]">
+          No vessels in the lock or waiting.
+        </p>
+      )}
+      <section>
+        <h3 className="font-mono text-[0.65rem] uppercase tracking-[0.14em] text-[var(--ink-soft)]">
+          Through · last 8 hours
+        </h3>
+        {through.length === 0 ? (
+          <p className="mt-1 text-xs text-[var(--ink-muted)]">
+            None finished in the last 8 hours.
+          </p>
+        ) : (
+          <ul className="divide-y divide-[var(--line)]">
+            {through.map((vessel, index) => (
+              <VesselLine
+                key={`through-${vessel.name}-${index}`}
+                vessel={vessel}
+              />
+            ))}
+          </ul>
+        )}
+      </section>
     </div>
   );
 }
@@ -324,6 +348,7 @@ export function LockBoard() {
               if (!next[id]) {
                 next[id] = {
                   vessels: [],
+                  through: [],
                   error: "Vessel list unavailable",
                 };
               }
