@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { LockStatus, LocksResponse } from "@/lib/locks";
+import type { LockVessels, VesselMovement, VesselsResponse } from "@/lib/vessels";
 
 const REFRESH_MS = 3 * 60 * 1000;
 const DEFAULT_LOCK = "13";
@@ -63,12 +64,107 @@ function Stat({
   );
 }
 
+function VesselLine({ vessel }: { vessel: VesselMovement }) {
+  const inLock = vessel.status === "locking";
+  return (
+    <li className="flex items-start justify-between gap-3 py-2">
+      <div className="min-w-0">
+        <p className="text-sm font-medium tracking-tight text-[var(--ink)]">
+          {vessel.name}
+        </p>
+        <p className="mt-0.5 text-xs text-[var(--ink-muted)]">
+          {vessel.direction} · {vessel.bargeLabel} · {vessel.whenLabel}
+        </p>
+      </div>
+      <span
+        className={cn(
+          "shrink-0 rounded-sm border px-1.5 py-0.5 font-mono text-[0.6rem] uppercase tracking-wider",
+          inLock
+            ? "border-[var(--accent)]/50 bg-[var(--accent)]/15 text-[var(--accent)]"
+            : vessel.next
+              ? "border-[var(--signal)]/60 bg-[var(--signal)]/15 text-[var(--signal)]"
+              : "border-[var(--line-strong)] text-[var(--ink-muted)]",
+        )}
+      >
+        {inLock ? "In lock" : vessel.next ? "Next" : "Pending"}
+      </span>
+    </li>
+  );
+}
+
+function VesselList({
+  report,
+  loading,
+}: {
+  report: LockVessels | undefined;
+  loading: boolean;
+}) {
+  if (!report && loading) {
+    return (
+      <p className="mt-3 text-xs text-[var(--ink-muted)]">Loading vessels…</p>
+    );
+  }
+  if (!report) return null;
+  if (report.error && report.vessels.length === 0) {
+    return (
+      <p className="mt-3 text-xs text-[var(--signal)]">{report.error}</p>
+    );
+  }
+
+  const inLock = report.vessels.filter((vessel) => vessel.status === "locking");
+  const pending = report.vessels.filter((vessel) => vessel.status === "pending");
+
+  if (inLock.length === 0 && pending.length === 0) {
+    return (
+      <p className="mt-3 text-xs text-[var(--ink-muted)]">
+        No vessels in the lock or waiting.
+      </p>
+    );
+  }
+
+  return (
+    <div className="mt-3 space-y-2">
+      {inLock.length > 0 && (
+        <section>
+          <h3 className="font-mono text-[0.65rem] uppercase tracking-[0.14em] text-[var(--accent)]">
+            In the lock
+          </h3>
+          <ul className="divide-y divide-[var(--line)]">
+            {inLock.map((vessel, index) => (
+              <VesselLine key={`lock-${vessel.name}-${index}`} vessel={vessel} />
+            ))}
+          </ul>
+        </section>
+      )}
+      {pending.length > 0 && (
+        <section>
+          <h3 className="font-mono text-[0.65rem] uppercase tracking-[0.14em] text-[var(--signal)]">
+            Pending
+          </h3>
+          <ul className="divide-y divide-[var(--line)]">
+            {pending.map((vessel, index) => (
+              <VesselLine
+                key={`wait-${vessel.name}-${index}`}
+                vessel={vessel}
+              />
+            ))}
+          </ul>
+        </section>
+      )}
+    </div>
+  );
+}
+
 function LockRow({
   lock,
   selected,
+  vessels,
+  vesselsLoading,
 }: {
   lock: LockStatus;
   selected: boolean;
+  vessels: LockVessels | undefined;
+  vesselsLoading: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const hasNotes = Boolean(lock.notes);
@@ -118,6 +214,8 @@ function LockRow({
         <Stat label="Avg delay" value={lock.average24HourDelay} />
       </dl>
 
+      <VesselList report={vessels} loading={vesselsLoading} />
+
       {hasNotes && (
         <div className="mt-3">
           <button
@@ -163,6 +261,11 @@ export function LockBoard() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedId, setSelectedId] = useState(DEFAULT_LOCK);
+  const [vesselsByLock, setVesselsByLock] = useState<
+    VesselsResponse["locks"]
+  >({});
+  const [vesselsLoading, setVesselsLoading] = useState(false);
+  const [vesselTick, setVesselTick] = useState(0);
 
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
@@ -176,6 +279,7 @@ export function LockBoard() {
       }
       setData(body);
       setError(null);
+      if (isRefresh) setVesselTick((tick) => tick + 1);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load locks");
     } finally {
@@ -195,6 +299,46 @@ export function LockBoard() {
     () => (data ? windowAround(data.locks, selectedId) : []),
     [data, selectedId],
   );
+  const windowKey = windowLocks.map((lock) => lock.displayNumber).join(",");
+
+  useEffect(() => {
+    if (!windowKey) return;
+    let cancelled = false;
+    setVesselsLoading(true);
+    void fetch(`/api/vessels?locks=${encodeURIComponent(windowKey)}`, {
+      cache: "no-store",
+    })
+      .then(async (res) => {
+        const body = (await res.json()) as VesselsResponse & { error?: string };
+        if (!res.ok) throw new Error(body.error || "Vessel list unavailable");
+        return body;
+      })
+      .then((body) => {
+        if (!cancelled) setVesselsByLock(body.locks);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setVesselsByLock((current) => {
+            const next = { ...current };
+            for (const id of windowKey.split(",")) {
+              if (!next[id]) {
+                next[id] = {
+                  vessels: [],
+                  error: "Vessel list unavailable",
+                };
+              }
+            }
+            return next;
+          });
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setVesselsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [windowKey, vesselTick]);
 
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col">
@@ -296,6 +440,8 @@ export function LockBoard() {
                   key={lock.lockNumber}
                   lock={lock}
                   selected={lock.displayNumber === selectedId}
+                  vessels={vesselsByLock[lock.displayNumber]}
+                  vesselsLoading={vesselsLoading}
                 />
               ))}
             </div>
