@@ -3,13 +3,19 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { LockStatus, LocksResponse } from "@/lib/locks";
+import {
+  distanceFromMile,
+  type LockStatus,
+  type LocksResponse,
+} from "@/lib/locks";
 import { lockContact } from "@/lib/lock-contacts";
 import type { LockVessels, VesselMovement, VesselsResponse } from "@/lib/vessels";
 
 const REFRESH_MS = 3 * 60 * 1000;
 const DEFAULT_LOCK = "13";
 const PAST_HOUR_OPTIONS = [4, 8, 12, 24, 48] as const;
+const MILE_STORAGE_KEY = "umr-your-mm";
+const MILE_SOURCE_KEY = "umr-your-mm-source";
 
 function withoutRecreational(
   vessels: VesselMovement[],
@@ -44,6 +50,27 @@ function formatUpdatedAt(iso: string | null): string {
 function formatMile(mm: number | null): string {
   if (mm === null) return "—";
   return `MM ${mm}`;
+}
+
+function parseYourMile(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const n = Number(trimmed);
+  if (!Number.isFinite(n) || n < 0 || n > 900) return null;
+  return n;
+}
+
+function formatMileValue(mile: number): string {
+  const rounded = Math.round(mile * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+}
+
+function formatAway(yourMile: number | null, lockMile: number | null): string | null {
+  if (yourMile === null) return null;
+  const distance = distanceFromMile(yourMile, lockMile);
+  if (!distance) return null;
+  if (distance.side === "at") return "At the lock";
+  return `${formatMileValue(distance.miles)} mi ${distance.side}`;
 }
 
 function Stat({
@@ -211,6 +238,7 @@ function LockRow({
   vesselsLoading,
   pastHours,
   showRec,
+  yourMile,
 }: {
   lock: LockStatus;
   selected: boolean;
@@ -218,10 +246,12 @@ function LockRow({
   vesselsLoading: boolean;
   pastHours: number;
   showRec: boolean;
+  yourMile: number | null;
 }) {
   const [open, setOpen] = useState(false);
   const hasNotes = Boolean(lock.notes);
   const contact = lockContact(lock.displayNumber);
+  const away = formatAway(yourMile, lock.mileMarker);
 
   return (
     <article
@@ -253,6 +283,11 @@ function LockRow({
                   {contact.phone}
                 </a>
               </>
+            )}
+            {away && (
+              <span className="font-mono text-sm tabular-nums text-[var(--ink)]">
+                {away}
+              </span>
             )}
           </div>
           <p className="mt-1 truncate text-sm text-[var(--ink-muted)]">
@@ -340,6 +375,79 @@ export function LockBoard() {
   >({});
   const [vesselsLoading, setVesselsLoading] = useState(false);
   const [vesselTick, setVesselTick] = useState(0);
+  const [mileInput, setMileInput] = useState("");
+  const [mileSource, setMileSource] = useState<"estimate" | "typed" | null>(
+    null,
+  );
+  const [mileReady, setMileReady] = useState(false);
+  const [locating, setLocating] = useState(false);
+  const [mileMessage, setMileMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem(MILE_STORAGE_KEY) ?? "";
+    const source = window.localStorage.getItem(MILE_SOURCE_KEY);
+    setMileInput(saved);
+    if (source === "estimate" || source === "typed") setMileSource(source);
+    setMileReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!mileReady) return;
+    const trimmed = mileInput.trim();
+    if (trimmed) window.localStorage.setItem(MILE_STORAGE_KEY, trimmed);
+    else window.localStorage.removeItem(MILE_STORAGE_KEY);
+    if (mileSource) window.localStorage.setItem(MILE_SOURCE_KEY, mileSource);
+    else window.localStorage.removeItem(MILE_SOURCE_KEY);
+  }, [mileInput, mileSource, mileReady]);
+
+  const yourMile = parseYourMile(mileInput);
+
+  const useMyLocation = useCallback(() => {
+    if (!navigator.geolocation) {
+      setMileMessage("Location is not available in this browser.");
+      return;
+    }
+    setLocating(true);
+    setMileMessage(null);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const params = new URLSearchParams({
+          lat: String(position.coords.latitude),
+          lon: String(position.coords.longitude),
+        });
+        void fetch(`/api/mile?${params.toString()}`, { cache: "no-store" })
+          .then(async (res) => {
+            const body = (await res.json()) as {
+              mile?: number;
+              error?: string;
+            };
+            if (!res.ok || typeof body.mile !== "number") {
+              throw new Error(body.error || "Could not estimate a river mile.");
+            }
+            setMileInput(formatMileValue(body.mile));
+            setMileSource("estimate");
+            setMileMessage(null);
+          })
+          .catch((err: unknown) => {
+            setMileMessage(
+              err instanceof Error
+                ? err.message
+                : "Could not estimate a river mile.",
+            );
+          })
+          .finally(() => setLocating(false));
+      },
+      (err) => {
+        setLocating(false);
+        setMileMessage(
+          err.code === err.PERMISSION_DENIED
+            ? "Location permission was denied."
+            : "Location is unavailable.",
+        );
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 30_000 },
+    );
+  }, []);
 
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
@@ -447,6 +555,41 @@ export function LockBoard() {
             )}
             <label className="inline-flex items-center gap-2 text-sm text-[var(--ink-soft)]">
               <span className="font-mono text-[0.7rem] uppercase tracking-[0.14em]">
+                Your MM
+              </span>
+              <input
+                aria-label="Your river mile"
+                inputMode="decimal"
+                value={mileInput}
+                placeholder="—"
+                onChange={(event) => {
+                  setMileInput(event.target.value);
+                  setMileSource(event.target.value.trim() ? "typed" : null);
+                  setMileMessage(null);
+                }}
+                className="h-8 w-20 rounded-lg border border-[var(--line-strong)] bg-[var(--panel)] px-2 font-mono text-sm text-[var(--ink)] outline-none focus-visible:border-[var(--accent)] focus-visible:ring-3 focus-visible:ring-[var(--accent)]/40"
+              />
+            </label>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={useMyLocation}
+              disabled={locating}
+              className="border-[var(--line-strong)] bg-[var(--panel)]/60 text-[var(--ink)] hover:bg-[var(--panel)]"
+            >
+              {locating ? "Locating…" : "Use my location"}
+            </Button>
+            {mileSource === "estimate" && yourMile !== null && (
+              <span className="font-mono text-[0.7rem] uppercase tracking-[0.14em] text-[var(--accent)]">
+                Estimate
+              </span>
+            )}
+            {mileMessage && (
+              <span className="text-sm text-[var(--signal)]">{mileMessage}</span>
+            )}
+            <label className="inline-flex items-center gap-2 text-sm text-[var(--ink-soft)]">
+              <span className="font-mono text-[0.7rem] uppercase tracking-[0.14em]">
                 Lock
               </span>
               <select
@@ -547,6 +690,7 @@ export function LockBoard() {
                   vesselsLoading={vesselsLoading}
                   pastHours={pastHours}
                   showRec={showRec}
+                  yourMile={yourMile}
                 />
               ))}
             </div>
@@ -555,7 +699,8 @@ export function LockBoard() {
       </main>
 
       <footer className="border-t border-[var(--line)] px-4 py-4 text-xs text-[var(--ink-muted)] sm:px-5">
-        Data from USACE Lock Performance Monitoring System. VHF channel and
+        Data from USACE Lock Performance Monitoring System. Your mile is
+        estimated from Corps river mile markers, or typed. VHF channel and
         phone from Corps locking-through and Rock Island District contact lists.
         Auto-refreshes every 3 minutes. Lock 5A included; there is no Lock 23.
       </footer>

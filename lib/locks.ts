@@ -157,6 +157,28 @@ function normalizeLock(lock: UsaceLock): LockStatus | null {
   };
 }
 
+export type MileSide = "upstream" | "downstream" | "at";
+
+/** River miles from a boat to a lock. Miles increase upstream. */
+export function distanceFromMile(
+  yourMile: number,
+  lockMile: number | null,
+): { miles: number; side: MileSide } | null {
+  if (
+    lockMile === null ||
+    !Number.isFinite(yourMile) ||
+    !Number.isFinite(lockMile)
+  ) {
+    return null;
+  }
+  const miles = Math.abs(yourMile - lockMile);
+  if (miles < 0.1) return { miles: 0, side: "at" };
+  return {
+    miles,
+    side: yourMile > lockMile ? "upstream" : "downstream",
+  };
+}
+
 export function parseUsaceLockStatus(raw: string): LocksResponse {
   const data = JSON.parse(sanitizeUsaceJson(raw)) as UsaceRiver[];
   const river = Array.isArray(data) ? data[0] : null;
