@@ -159,7 +159,10 @@ function normalizeLock(lock: UsaceLock): LockStatus | null {
 
 export type MileSide = "upstream" | "downstream" | "at";
 
-/** River miles from a boat to a lock. Miles increase upstream. */
+/**
+ * River miles from the boat to a lock, and which way the lock lies.
+ * Miles decrease downstream, toward Lock 26 and the Ohio at Cairo.
+ */
 export function distanceFromMile(
   yourMile: number,
   lockMile: number | null,
@@ -175,7 +178,7 @@ export function distanceFromMile(
   if (miles < 0.1) return { miles: 0, side: "at" };
   return {
     miles,
-    side: yourMile > lockMile ? "upstream" : "downstream",
+    side: yourMile > lockMile ? "downstream" : "upstream",
   };
 }
 
