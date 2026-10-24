@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   currentVessels,
-  passagesInLastEightHours,
+  finishedPassages,
   queueUrl,
   type LockVessels,
   type VesselsResponse,
@@ -44,7 +44,7 @@ async function fetchLockVessels(displayNumber: string): Promise<LockVessels> {
 
   const payload: LockVessels = {
     vessels: currentVessels(xml),
-    through: passagesInLastEightHours(xml),
+    through: finishedPassages(xml),
   };
   cache.set(displayNumber, { expiresAt: now + CACHE_TTL_MS, payload });
   return payload;

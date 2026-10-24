@@ -16,7 +16,7 @@ Open [http://127.0.0.1:43127](http://127.0.0.1:43127).
 - The browser calls `/api/locks`.
 - That route proxies `lock_status_report_json?in_river_code=MI` from USACE, sanitizes control characters in the JSON, filters to UMR locks 1–26 + 5A (excludes St. Anthony Falls and Lock 27), and caches the result for about 3 minutes.
 - The page opens on Lock 13 and shows that lock plus the one above and the one below.
-- `/api/vessels` reads the Corps lock-queue report for those locks. A tow with a start time and no end time is **in the lock**. A tow that has arrived and not started is **pending**, earliest arrival first. The first waiting tow is marked **Next**. Tows that finished lockage in the last 8 hours are listed under **Through**, most recent first.
+- `/api/vessels` reads the Corps lock-queue report for those locks. A tow with a start time and no end time is **in the lock**. A tow that has arrived and not started is **pending**, earliest arrival first. The first waiting tow is marked **Next**. Finished lockages are listed under **Through**. The page defaults to the last 8 hours; the reader can choose 4, 8, 12, 24, or 48. Recreational lockages stay hidden until **Rec locks** is turned on.
 - The page auto-refreshes on the same interval.
 
 No API keys required. If the Corps feed is briefly unavailable, the UI shows an error with retry (and keeps the last good snapshot when a refresh fails mid-session).

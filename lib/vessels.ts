@@ -7,6 +7,8 @@ export type VesselMovement = {
   bargeLabel: string;
   whenLabel: string;
   next: boolean;
+  recreational: boolean;
+  finishedAt?: number;
 };
 
 export type LockVessels = {
@@ -21,6 +23,7 @@ export type VesselsResponse = {
 
 type QueueRow = {
   VESSEL_NAME?: string;
+  VESSEL_NO?: string;
   DIRECTION?: string;
   NUM_BARGES?: string;
   SOL_DATE?: string;
@@ -93,8 +96,6 @@ function parseRows(xml: string): QueueRow[] {
   }
   return rows;
 }
-
-const EIGHT_HOURS_MS = 8 * 60 * 60 * 1000;
 
 function chicagoOffsetMs(utcMs: number): number {
   const tz = new Intl.DateTimeFormat("en-US", {
@@ -170,6 +171,14 @@ function bargeLabel(count: number): string {
   return `${count} barges`;
 }
 
+export function isRecreational(
+  name: string | undefined,
+  vesselNo: string | undefined,
+): boolean {
+  if (vesselNo?.trim() === "9999999") return true;
+  return /recreational|recreation vessel/i.test(name ?? "");
+}
+
 export function currentVessels(xml: string): VesselMovement[] {
   const locking: Array<VesselMovement & { sort: number }> = [];
   const pending: Array<VesselMovement & { sort: number }> = [];
@@ -187,6 +196,7 @@ export function currentVessels(xml: string): VesselMovement[] {
       barges: bargeCount,
       bargeLabel: bargeLabel(bargeCount),
       next: false,
+      recreational: isRecreational(name, row.VESSEL_NO),
     };
 
     if (row.SOL_DATE) {
@@ -220,18 +230,15 @@ export function currentVessels(xml: string): VesselMovement[] {
   return [...locking, ...pending].map(({ sort: _sort, ...vessel }) => vessel);
 }
 
-export function passagesInLastEightHours(
+export function finishedPassages(
   xml: string,
   now = Date.now(),
 ): VesselMovement[] {
-  const finished: Array<VesselMovement & { sort: number }> = [];
-  const earliest = now - EIGHT_HOURS_MS;
+  const finished: VesselMovement[] = [];
 
   for (const row of parseRows(xml)) {
     const endedAt = centralClockToUtc(row.END_OF_LOCKAGE);
-    if (endedAt === null || endedAt < earliest || endedAt > now + 2 * 60 * 1000) {
-      continue;
-    }
+    if (endedAt === null || endedAt > now + 2 * 60 * 1000) continue;
     const name = row.VESSEL_NAME?.trim();
     if (!name) continue;
     const barges = Number(row.NUM_BARGES);
@@ -243,13 +250,14 @@ export function passagesInLastEightHours(
       barges: bargeCount,
       bargeLabel: bargeLabel(bargeCount),
       next: false,
+      recreational: isRecreational(name, row.VESSEL_NO),
       status: "passed",
       statusLabel: "Through",
       whenLabel: clock ? `Finished ${clock}` : "Finished",
-      sort: endedAt,
+      finishedAt: endedAt,
     });
   }
 
-  finished.sort((a, b) => b.sort - a.sort);
-  return finished.map(({ sort: _sort, ...vessel }) => vessel);
+  finished.sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0));
+  return finished;
 }

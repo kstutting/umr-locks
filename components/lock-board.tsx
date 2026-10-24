@@ -8,6 +8,15 @@ import type { LockVessels, VesselMovement, VesselsResponse } from "@/lib/vessels
 
 const REFRESH_MS = 3 * 60 * 1000;
 const DEFAULT_LOCK = "13";
+const PAST_HOUR_OPTIONS = [4, 8, 12, 24, 48] as const;
+
+function withoutRecreational(
+  vessels: VesselMovement[],
+  showRec: boolean,
+): VesselMovement[] {
+  if (showRec) return vessels;
+  return vessels.filter((vessel) => !vessel.recreational);
+}
 
 function windowAround(locks: LockStatus[], selectedId: string): LockStatus[] {
   const index = locks.findIndex((lock) => lock.displayNumber === selectedId);
@@ -102,9 +111,13 @@ function VesselLine({ vessel }: { vessel: VesselMovement }) {
 function VesselList({
   report,
   loading,
+  pastHours,
+  showRec,
 }: {
   report: LockVessels | undefined;
   loading: boolean;
+  pastHours: number;
+  showRec: boolean;
 }) {
   if (!report && loading) {
     return (
@@ -112,15 +125,26 @@ function VesselList({
     );
   }
   if (!report) return null;
-  const through = report.through ?? [];
-  if (report.error && report.vessels.length === 0 && through.length === 0) {
+  const throughAll = report.through ?? [];
+  if (report.error && report.vessels.length === 0 && throughAll.length === 0) {
     return (
       <p className="mt-3 text-xs text-[var(--signal)]">{report.error}</p>
     );
   }
 
-  const inLock = report.vessels.filter((vessel) => vessel.status === "locking");
-  const pending = report.vessels.filter((vessel) => vessel.status === "pending");
+  const inLock = withoutRecreational(
+    report.vessels.filter((vessel) => vessel.status === "locking"),
+    showRec,
+  );
+  const pending = withoutRecreational(
+    report.vessels.filter((vessel) => vessel.status === "pending"),
+    showRec,
+  ).map((vessel, index) => ({ ...vessel, next: index === 0 }));
+  const cutoff = Date.now() - pastHours * 60 * 60 * 1000;
+  const through = withoutRecreational(
+    throughAll.filter((vessel) => (vessel.finishedAt ?? 0) >= cutoff),
+    showRec,
+  );
 
   return (
     <div className="mt-3 space-y-2">
@@ -158,11 +182,11 @@ function VesselList({
       )}
       <section>
         <h3 className="font-mono text-[0.65rem] uppercase tracking-[0.14em] text-[var(--ink-soft)]">
-          Through · last 8 hours
+          Through · last {pastHours} hours
         </h3>
         {through.length === 0 ? (
           <p className="mt-1 text-xs text-[var(--ink-muted)]">
-            None finished in the last 8 hours.
+            None finished in the last {pastHours} hours.
           </p>
         ) : (
           <ul className="divide-y divide-[var(--line)]">
@@ -184,11 +208,15 @@ function LockRow({
   selected,
   vessels,
   vesselsLoading,
+  pastHours,
+  showRec,
 }: {
   lock: LockStatus;
   selected: boolean;
   vessels: LockVessels | undefined;
   vesselsLoading: boolean;
+  pastHours: number;
+  showRec: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const hasNotes = Boolean(lock.notes);
@@ -238,7 +266,12 @@ function LockRow({
         <Stat label="Avg delay" value={lock.average24HourDelay} />
       </dl>
 
-      <VesselList report={vessels} loading={vesselsLoading} />
+      <VesselList
+        report={vessels}
+        loading={vesselsLoading}
+        pastHours={pastHours}
+        showRec={showRec}
+      />
 
       {hasNotes && (
         <div className="mt-3">
@@ -285,6 +318,8 @@ export function LockBoard() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedId, setSelectedId] = useState(DEFAULT_LOCK);
+  const [pastHours, setPastHours] = useState<number>(8);
+  const [showRec, setShowRec] = useState(false);
   const [vesselsByLock, setVesselsByLock] = useState<
     VesselsResponse["locks"]
   >({});
@@ -417,6 +452,34 @@ export function LockBoard() {
                 )}
               </select>
             </label>
+            <label className="inline-flex items-center gap-2 text-sm text-[var(--ink-soft)]">
+              <span className="font-mono text-[0.7rem] uppercase tracking-[0.14em]">
+                Past
+              </span>
+              <select
+                aria-label="Hours of past lockages"
+                value={pastHours}
+                onChange={(event) => setPastHours(Number(event.target.value))}
+                className="h-8 rounded-lg border border-[var(--line-strong)] bg-[var(--panel)] px-2 font-mono text-sm text-[var(--ink)] outline-none focus-visible:border-[var(--accent)] focus-visible:ring-3 focus-visible:ring-[var(--accent)]/40"
+              >
+                {PAST_HOUR_OPTIONS.map((hours) => (
+                  <option key={hours} value={hours}>
+                    {hours} hours
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="inline-flex items-center gap-2 text-sm text-[var(--ink-soft)]">
+              <input
+                type="checkbox"
+                checked={showRec}
+                onChange={(event) => setShowRec(event.target.checked)}
+                className="size-4 accent-[var(--accent)]"
+              />
+              <span className="font-mono text-[0.7rem] uppercase tracking-[0.14em]">
+                Rec locks
+              </span>
+            </label>
             <Button
               type="button"
               variant="outline"
@@ -467,6 +530,8 @@ export function LockBoard() {
                   selected={lock.displayNumber === selectedId}
                   vessels={vesselsByLock[lock.displayNumber]}
                   vesselsLoading={vesselsLoading}
+                  pastHours={pastHours}
+                  showRec={showRec}
                 />
               ))}
             </div>
