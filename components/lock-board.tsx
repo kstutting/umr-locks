@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { LockStatus, LocksResponse } from "@/lib/locks";
+import { lockContact } from "@/lib/lock-contacts";
 import type { LockVessels, VesselMovement, VesselsResponse } from "@/lib/vessels";
 
 const REFRESH_MS = 3 * 60 * 1000;
@@ -220,6 +221,7 @@ function LockRow({
 }) {
   const [open, setOpen] = useState(false);
   const hasNotes = Boolean(lock.notes);
+  const contact = lockContact(lock.displayNumber);
 
   return (
     <article
@@ -239,6 +241,19 @@ function LockRow({
             <span className="font-mono text-sm tabular-nums text-[var(--accent)]">
               {formatMile(lock.mileMarker)}
             </span>
+            {contact && (
+              <>
+                <span className="font-mono text-sm tabular-nums text-[var(--ink-soft)]">
+                  Ch {contact.channel}
+                </span>
+                <a
+                  href={`tel:${contact.tel}`}
+                  className="font-mono text-sm tabular-nums text-[var(--accent)] underline-offset-2 hover:underline"
+                >
+                  {contact.phone}
+                </a>
+              </>
+            )}
           </div>
           <p className="mt-1 truncate text-sm text-[var(--ink-muted)]">
             {lock.lockName}
@@ -540,8 +555,9 @@ export function LockBoard() {
       </main>
 
       <footer className="border-t border-[var(--line)] px-4 py-4 text-xs text-[var(--ink-muted)] sm:px-5">
-        Data from USACE Lock Performance Monitoring System. Auto-refreshes every
-        3 minutes. Lock 5A included; there is no Lock 23.
+        Data from USACE Lock Performance Monitoring System. VHF channel and
+        phone from Corps locking-through and Rock Island District contact lists.
+        Auto-refreshes every 3 minutes. Lock 5A included; there is no Lock 23.
       </footer>
     </div>
   );
